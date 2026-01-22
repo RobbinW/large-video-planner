@@ -20,3 +20,14 @@ model:
   ffn_dim: 13824
   num_heads: 40
   num_layers: 40
+  use_lora: false
+  lora_rank: 32
+  lora_alpha: 32
+  lora_dropout: 0.05
+  lora_target_modules: 
+    - q
+    - k
+    - v
+    - o
+    - k_img
+    - v_img

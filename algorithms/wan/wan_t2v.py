@@ -196,9 +196,32 @@ class WanTextToVideo(BasePytorchAlgo):
             # )
         if not self.is_inference:
             self.model.to(self.dtype).train()
-            # Ensure parameters require gradients (assign=True in load_state_dict may freeze them)
-            for p in self.model.parameters():
-                p.requires_grad_(True)
+
+            if self.cfg.model.get("use_lora", False):
+                import peft
+                from peft import LoraConfig, get_peft_model
+                
+                lora_rank = self.cfg.model.get("lora_rank", 32)
+                lora_alpha = self.cfg.model.get("lora_alpha", 32)
+                lora_dropout = self.cfg.model.get("lora_dropout", 0.05)
+                target_modules = list(self.cfg.model.get("lora_target_modules", ["q", "k", "v", "o"]))
+                
+                logging.info(f"Applying LoRA: rank={lora_rank}, alpha={lora_alpha}, targets={target_modules}")
+                
+                lora_config = LoraConfig(
+                    r=lora_rank,
+                    lora_alpha=lora_alpha,
+                    target_modules=target_modules,
+                    lora_dropout=lora_dropout,
+                    bias="none",
+                )
+                self.model = get_peft_model(self.model, lora_config)
+                self.model.print_trainable_parameters()
+            else:
+                # Ensure parameters require gradients (assign=True in load_state_dict may freeze them)
+                for p in self.model.parameters():
+                    p.requires_grad_(True)
+
         if self.gradient_checkpointing_rate > 0:
             self.model.gradient_checkpointing_enable(p=self.gradient_checkpointing_rate)
         if self.cfg.model.compile:
@@ -472,6 +495,21 @@ class WanTextToVideo(BasePytorchAlgo):
         noisy_lat, noise, t = self.add_training_noise(video_lat)
         flow = noise - video_lat
 
+        # Ensure inputs are in the correct dtype (bfloat16) to match model weights
+        # This is necessary when upstream encoders (Text/CLIP) might be in float32 
+        # but the model is in bfloat16 (e.g. via FSDP mixed precision or LoRA)
+        target_dtype = torch.bfloat16
+        
+        if noisy_lat.dtype != target_dtype:
+            noisy_lat = noisy_lat.to(target_dtype)
+
+        if clip_embeds is not None and clip_embeds.dtype != target_dtype:
+            clip_embeds = clip_embeds.to(target_dtype)
+        if image_embeds is not None and image_embeds.dtype != target_dtype:
+            image_embeds = image_embeds.to(target_dtype)
+        if prompt_embeds is not None:
+             prompt_embeds = [u.to(target_dtype) if u.dtype != target_dtype else u for u in prompt_embeds]
+
         flow_pred = self.model(
             noisy_lat,
             t=t,
@@ -488,6 +526,19 @@ class WanTextToVideo(BasePytorchAlgo):
             self.log("train/loss", loss, sync_dist=True, prog_bar=True)
 
         return loss
+
+    def on_save_checkpoint(self, checkpoint):
+        """
+        Filter checkpoint to only save LoRA parameters if LoRA is enabled.
+        This significantly reduces checkpoint size.
+        """
+        if self.cfg.model.get("use_lora", False):
+            # Filter the existing state_dict to keep only trainable params (LoRA)
+            new_state_dict = {}
+            for k, v in checkpoint["state_dict"].items():
+                if "lora_" in k or "modules_to_save" in k or ".lora" in k:
+                    new_state_dict[k] = v
+            checkpoint["state_dict"] = new_state_dict
 
     @torch.no_grad()
     def sample_seq(self, batch, hist_len=1, pbar=None):
@@ -594,6 +645,11 @@ class WanTextToVideo(BasePytorchAlgo):
             pbar.update(1)
 
         video_pred_lat[:, :, :hist_len] = video_lat[:, :, :hist_len]
+
+        # Cast latents to VAE's dtype before decoding
+        # Because diffusion sampling might produce float32 (or bfloat16), but VAE weights are strictly typed.
+        if video_pred_lat.dtype != self.vae_mean.dtype:
+            video_pred_lat = video_pred_lat.to(self.vae_mean.dtype)
 
         video_pred = self.decode_video(video_pred_lat)
         video_pred = rearrange(video_pred, "b c t h w -> b t c h w")

@@ -30,6 +30,12 @@ class WanImageToVideo(WanTextToVideo):
             dtype=torch.bfloat16 if self.is_inference else self.dtype,
             device="cpu",
         )
+
+
+        clip.eval()
+        for param in clip.parameters():
+            param.requires_grad = False
+
         if self.cfg.clip.ckpt_path is not None:
             clip.load_state_dict(
                 torch.load(

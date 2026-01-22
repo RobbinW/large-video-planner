@@ -7,7 +7,7 @@ defaults:
 
 tasks: [training] # tasks to run sequantially, change when your project has multiple stages and you want to run only a openx of them.
 num_nodes: 1 # number of gpu servers used in large scale distributed training
-strategy: fsdp # distributed strategy to use, options: ddp, deepspeed_stage_2, fsdp
+strategy: deepspeed_stage_2 # distributed strategy to use, options: ddp, deepspeed_stage_2, fsdp
 
 training:
   precision: 16-mixed # set float precision, 16-mixed is faster while 32 is more stable
