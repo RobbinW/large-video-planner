@@ -2,3 +2,4 @@ outputs/
 *.pyc
 .vscode/
 data/
+checkpoints/

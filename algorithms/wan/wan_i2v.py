@@ -27,7 +27,7 @@ class WanImageToVideo(WanTextToVideo):
             pretrained=False,
             return_transforms=True,
             return_tokenizer=False,
-            dtype=torch.bfloat16 if self.is_inference else self.dtype,
+            dtype=torch.bfloat16, # Assume bf16 always
             device="cpu",
         )
 
@@ -97,6 +97,9 @@ class WanImageToVideo(WanTextToVideo):
             videos, size=size, mode="bicubic", align_corners=False
         )
         videos = self.clip_normalize(videos.mul_(0.5).add_(0.5))
+        # Ensure videos match CLIP parameters dtype
+        target_dtype = next(self.clip.parameters()).dtype
+        videos = videos.to(dtype=target_dtype)
         return self.clip.visual(videos, use_31_block=True)
 
     @torch.no_grad()

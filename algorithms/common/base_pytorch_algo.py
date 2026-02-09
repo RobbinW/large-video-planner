@@ -22,6 +22,10 @@ class BasePytorchAlgo(pl.LightningModule, ABC):
         self.cfg = cfg
         self.debug = self.cfg.debug
         super().__init__()
+        # Ensure model components are built on initialization for manual use (outside Lightning Trainer)
+        if not hasattr(self, 'model'):
+             if hasattr(self, 'configure_model'):
+                  self.configure_model()
 
     @abstractmethod
     def training_step(self, *args: Any, **kwargs: Any) -> STEP_OUTPUT:

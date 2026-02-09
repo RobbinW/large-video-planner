@@ -13,6 +13,8 @@ import io
 from PIL import Image
 import torchvision.transforms as transforms
 from utils.video_utils import numpy_to_mp4_bytes
+import peft
+
 
 from .modules.model import WanModel, WanAttentionBlock
 from .modules.t5 import umt5_xxl, T5CrossAttention, T5SelfAttention
@@ -87,18 +89,27 @@ class WanTextToVideo(BasePytorchAlgo):
 
     @property
     def is_inference(self) -> bool:
+        # Check for force_training flag in config (added for manual training loops without PL Trainer)
+        if self.cfg.get("force_training", False):
+            return False
+            
         return self._trainer is None or not self.trainer.training
+        # self._trainer 是一个内部属性，默认为 None。只有当您使用 pl.Trainer 运行模型（如 trainer.fit(model)）时，Lightning 才会将 Trainer 实例注入到这个属性中。
+        # self.trainer 是一个包装属性，它直接返回 self._trainer
+        # 
+
 
     def configure_model(self):
         logging.info("Building model...")
-        print(f"[DEBUG] configure_model called. is_inference={self.is_inference}, self.training={self.training}")
+        target_dtype = torch.bfloat16
+        print(f"[DEBUG] configure_model called. is_inference={self.is_inference}, target_dtype={target_dtype}, self.training={self.training}")
         # Initialize text encoder
         if not self.cfg.load_prompt_embed:
             text_encoder = (
                 umt5_xxl(
                     encoder_only=True,
                     return_tokenizer=False,
-                    dtype=torch.bfloat16 if self.is_inference else self.dtype,
+                    dtype=target_dtype,
                     device=torch.device("cpu"),
                 )
                 .eval()
@@ -134,13 +145,13 @@ class WanTextToVideo(BasePytorchAlgo):
             )
             .eval()
             .requires_grad_(False)
-        ).to(torch.bfloat16 if self.is_inference else self.dtype)
-        print( f"self.dtype: {self.dtype}")
+        ).to(target_dtype)
+        print( f"target_dtype: {target_dtype}")
         self.register_buffer(
-            "vae_mean", torch.tensor(self.cfg.vae.mean, dtype=torch.bfloat16 if self.is_inference else self.dtype)
+            "vae_mean", torch.tensor(self.cfg.vae.mean, dtype=target_dtype)
         )
         self.register_buffer(
-            "vae_inv_std", 1.0 / torch.tensor(self.cfg.vae.std, dtype=torch.bfloat16 if self.is_inference else self.dtype)
+            "vae_inv_std", 1.0 / torch.tensor(self.cfg.vae.std, dtype=target_dtype)
         )
         self.vae_scale = [self.vae_mean, self.vae_inv_std]
         if self.cfg.vae.compile:
@@ -158,47 +169,16 @@ class WanTextToVideo(BasePytorchAlgo):
             self.model.load_state_dict(
                 self._load_tuned_state_dict(), assign=not self.is_inference
             )
-            
-            # [Fix] Force parameters to require gradients if this is loaded for training
-            # Moving this OUTSIDE the is_inference check for debugging, or relying on correctly detected state.
-            # If load_state_dict with assign=True was used, params are frozen.
-            # If standard load_state_dict was used, params might be consistent with initialization.
-            # We explicitly check and unfreeze if we are in training mode or just to be safe for DeepSpeed.
-            print(f"[DEBUG] Model loaded. Checking parameters... is_inference={self.is_inference}")
-            tune_params = list(self.model.parameters())
-            trainable = [p for p in tune_params if p.requires_grad]
-            total_elements = sum(p.numel() for p in tune_params)
-            trainable_elements = sum(p.numel() for p in trainable)
-            print(f"[DEBUG] Total params (elements): {total_elements/1e9:.2f} B, Trainable (elements): {trainable_elements/1e9:.2f} B")
-            print(f"[DEBUG] Total params (tensors): {len(tune_params)}, Trainable (tensors): {len(trainable)}")
-            
-            if len(trainable) == 0:
-                print("[DEBUG] No trainable parameters found! Forcing requires_grad=True for model parameters.")
-                for p in self.model.parameters():
-                    p.requires_grad_(True)
 
-            # self.model = WanModel(
-            #     model_type=self.cfg.model.model_type,
-            #     patch_size=self.cfg.model.patch_size,
-            #     text_len=self.cfg.text_encoder.text_len,
-            #     in_dim=self.cfg.model.in_dim,
-            #     dim=self.cfg.model.dim,
-            #     ffn_dim=self.cfg.model.ffn_dim,
-            #     freq_dim=self.cfg.model.freq_dim,
-            #     text_dim=self.cfg.text_encoder.text_dim,
-            #     out_dim=self.cfg.model.out_dim,
-            #     num_heads=self.cfg.model.num_heads,
-            #     num_layers=self.cfg.model.num_layers,
-            #     window_size=self.cfg.model.window_size,
-            #     qk_norm=self.cfg.model.qk_norm,
-            #     cross_attn_norm=self.cfg.model.cross_attn_norm,
-            #     eps=self.cfg.model.eps,
-            # )
+        # 先默认关闭所有梯度，后面再根据 LoRA 或 全参 打开
+        for p in self.model.parameters():
+            p.requires_grad_(False)
+            
+        # self.training 依赖 is_inference取反
         if not self.is_inference:
             self.model.to(self.dtype).train()
 
             if self.cfg.model.get("use_lora", False):
-                import peft
                 from peft import LoraConfig, get_peft_model
                 
                 lora_rank = self.cfg.model.get("lora_rank", 32)
@@ -222,28 +202,73 @@ class WanTextToVideo(BasePytorchAlgo):
                 for p in self.model.parameters():
                     p.requires_grad_(True)
 
+
+            
+            print(f"[DEBUG] Model loaded. Checking parameters... is_inference={self.is_inference}")
+            tune_params = list(self.model.parameters())
+            trainable = [p for p in tune_params if p.requires_grad]
+            total_elements = sum(p.numel() for p in tune_params)
+            trainable_elements = sum(p.numel() for p in trainable)
+            print(f"[DEBUG] Total params (elements): {total_elements/1e9:.2f} B, Trainable (elements): {trainable_elements/1e9:.2f} B")
+            print(f"[DEBUG] Total params (tensors): {len(tune_params)}, Trainable (tensors): {len(trainable)}")
+            
+
+        else:
+            self.model.to(torch.bfloat16).eval()
+            print("[DEBUG] Inference mode: model set to bfloat16 and eval()")
+
         if self.gradient_checkpointing_rate > 0:
             self.model.gradient_checkpointing_enable(p=self.gradient_checkpointing_rate)
+
+            # 🔥🔥🔥 Fix for Gradient Checkpointing + LoRA 🔥🔥🔥
+            # Ensure input to the checkpointed part requires gradients.
+            if hasattr(self.model, "enable_input_require_grads"):
+                # Usually works if get_input_embeddings is implemented
+                try:
+                    self.model.enable_input_require_grads()
+                    print("[DEBUG] Enabled input_require_grads via model.enable_input_require_grads()")
+                except (AttributeError, NotImplementedError):
+                    # Fallback for WanModel which might not implement get_input_embeddings
+                    print("[DEBUG] model.enable_input_require_grads() failed. Using patch_embedding hook.")
+                    def make_inputs_require_grad(module, input, output):
+                        output.requires_grad_(True)
+                    if hasattr(self.model, "patch_embedding"):
+                        self.model.patch_embedding.register_forward_hook(make_inputs_require_grad)
+                    else:
+                        print("[DEBUG] WARNING: patch_embedding not found. Gradients might still be broken.")
+            else:
+                 # Fallback manual hook
+                def make_inputs_require_grad(module, input, output):
+                    output.requires_grad_(True)
+                if hasattr(self.model, "patch_embedding"):
+                    self.model.patch_embedding.register_forward_hook(make_inputs_require_grad)
+                    print("[DEBUG] Registered hook on model.patch_embedding")
+                else:
+                    self.model.register_forward_hook(make_inputs_require_grad)
+                    print("[DEBUG] Registered hook on model (fallback)")
+
+            print("[DEBUG] Enabled input_require_grads for Gradient Checkpointing compatibility.")
+
         if self.cfg.model.compile:
             self.model = torch.compile(self.model)
 
         self.training_scheduler, self.training_timesteps = self.build_scheduler(True)
 
     def configure_optimizers(self):
+        # 🔥 核心修改：只筛选 requires_grad=True 的参数
+        # 这样优化器只盯着 LoRA 看，效率高且不出错
+        trainable_params = [p for p in self.model.parameters() if p.requires_grad]
+        
+        # 打印一下确认找到了参数
+        print(f"[DEBUG OPTIM] Trainable params count: {len(trainable_params)}")
+
         optimizer = torch.optim.AdamW(
-            [
-                {"params": self.model.parameters(), "lr": self.cfg.lr},
-                {"params": self.vae.parameters(), "lr": 0},
-            ],
+            trainable_params,  # <--- 只传这个
+            lr=self.cfg.lr,
             weight_decay=self.cfg.weight_decay,
             betas=self.cfg.betas,
         )
-        # optimizer = torch.optim.AdamW(
-        #     self.model.parameters(),
-        #     lr=self.cfg.lr,
-        #     weight_decay=self.cfg.weight_decay,
-        #     betas=self.cfg.betas,
-        # )
+
         lr_scheduler_config = {
             "scheduler": get_scheduler(
                 optimizer=optimizer,
@@ -306,18 +331,63 @@ class WanTextToVideo(BasePytorchAlgo):
 
     def encode_text(self, texts):
         ids, mask = self.tokenizer(texts, return_mask=True, add_special_tokens=True)
-        ids = ids.to(self.device)
-        mask = mask.to(self.device)
+        # Ensure inputs match text_encoder device
+        enc_device = next(self.text_encoder.parameters()).device
+        ids = ids.to(enc_device)
+        mask = mask.to(enc_device)
+        
         seq_lens = mask.gt(0).sum(dim=1).long()
         context = self.text_encoder(ids, mask)
+        
+        # Move output back to model device if needed, but context is usually used immediately.
+        # However, to be safe for subsequent model calls:
+        if context.device != self.device:
+             context = context.to(self.device)
+             
         return [u[:v] for u, v in zip(context, seq_lens)]
+
+    @staticmethod
+    def pad_text_context_to_tensor(context_list, text_len: int):
+        """
+        context_list: List[Tensor], each [L_i, C]
+        return: Tensor [B, text_len, C]
+        """
+        assert isinstance(context_list, (list, tuple))
+        assert len(context_list) > 0
+        device = context_list[0].device
+        dtype = context_list[0].dtype
+        C = context_list[0].shape[-1]
+
+        out = []
+        for u in context_list:
+            if u.dim() != 2:
+                raise ValueError(f"each context must be [L, C], got {u.shape}")
+            L, C_u = u.shape
+            if C_u != C:
+                raise ValueError(f"context dim mismatch: {C_u} vs {C}")
+
+            if L < text_len:
+                pad = u.new_zeros((text_len - L, C))
+                u2 = torch.cat([u, pad], dim=0)
+            else:
+                u2 = u[:text_len]
+            out.append(u2)
+
+        return torch.stack(out, dim=0).to(device=device, dtype=dtype)  # [B, text_len, C]
+
 
     def encode_video(self, videos):
         """videos: [B, C, T, H, W]"""
+        # Ensure videos match VAE dtype (likely bfloat16)
+        if hasattr(self, 'vae') and hasattr(self.vae, 'parameters'):
+             target_dtype = next(self.vae.parameters()).dtype
+             videos = videos.to(dtype=target_dtype)
         return self.vae.encode(videos, self.vae_scale)
 
     def decode_video(self, zs):
-        return self.vae.decode(zs, self.vae_scale).clamp_(-1, 1)
+        # Ensure scale is in the same dtype as zs to avoid implicit casting to float32 if scale is float32
+        scale = [s.to(zs.dtype) for s in self.vae_scale]
+        return self.vae.decode(zs, scale).clamp_(-1, 1)
 
     def clone_batch(self, batch):
         new_batch = {}
@@ -648,8 +718,10 @@ class WanTextToVideo(BasePytorchAlgo):
 
         # Cast latents to VAE's dtype before decoding
         # Because diffusion sampling might produce float32 (or bfloat16), but VAE weights are strictly typed.
-        if video_pred_lat.dtype != self.vae_mean.dtype:
-            video_pred_lat = video_pred_lat.to(self.vae_mean.dtype)
+        # We check the actual dtype of the VAE parameters to be safe (vae_mean buffer might lag behind in float32)
+        vae_dtype = next(self.vae.parameters()).dtype
+        if video_pred_lat.dtype != vae_dtype:
+            video_pred_lat = video_pred_lat.to(vae_dtype)
 
         video_pred = self.decode_video(video_pred_lat)
         video_pred = rearrange(video_pred, "b c t h w -> b t c h w")

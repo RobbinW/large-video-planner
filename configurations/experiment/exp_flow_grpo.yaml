@@ -1,0 +1,74 @@
+# @package experiment
+_name: exp_flow_grpo
+
+defaults:
+  - base_pytorch
+  - _self_
+
+tasks: [training]
+
+training:
+  lr: 1e-5
+  batch_size: 1 # Sample batch size per device
+  num_epochs: 100
+  
+  precision: bf16 # mixed precision
+  strategy: fsdp
+
+  optim:
+    gradient_clip_val: 1.0
+    num_workers: 4
+
+  seed: 0
+
+  sample:
+    train_batch_size: 1 # per device
+    num_image_per_prompt: 8 # number of images to generate per prompt during training
+    eval_batch_size: 1 # per device
+    guidance_scale: 5.0 # Classifier-free guidance scale during sampling
+    num_batches_per_epoch: 1 # Number of batches per epoch
+    num_steps: 40 # Number of diffusion steps during sampling
+    global_std: False # Whether to use global std during sampling
+    kl_reward : 0.0 # Weight for KL reward during sampling
+
+  train:
+    ema: False
+    ema_decay: 0.9
+    ema_interval: 8
+    cfg: False # Whether to use classifier-free guidance during training
+    num_inner_epochs: 2 # Number of inner epochs for GRPO
+    gradient_accumulation_steps: 1 # Gradient accumulation steps
+    timestep_fraction :  0.99 # Fraction of timesteps to use during training
+    adv_clip_max : 5.0 # Max value for advantage clipping
+    clip_range : 2e-3 
+    beta : 0.0 # KL penalty (Adjusted for stable regularization)
+    max_grad_norm : 1.0
+
+
+  per_prompt_stat_tracking: True
+
+  reward:
+    num_workers: 4
+
+  eval_every_n_epochs: 10
+  eval_num_batches: 1
+  eval_num_videos: 4
+  eval_fps: 16
+  save_every_n_epochs: 10
+
+  reward_model_path: "/data/dex/vidar/vidar_ckpts/resnet_plus_robotwin/big_view.pt"
+
+
+
+reward:
+  # Define rewards configuration
+  aesthetic: False
+  compression: False
+  video_ocr: False
+  idm_smoothness: True
+
+validation:
+  batch_size: 1
+  
+test:
+  batch_size: 1
