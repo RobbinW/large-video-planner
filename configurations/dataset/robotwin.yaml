@@ -4,13 +4,13 @@ defaults:
 
 data_root: /data/dex/RoboTwin/data
 metadata_path: robotwin_videos.csv
-load_prompt_embed: true
+load_prompt_embed: True
 load_video_latent: false
 pad_mode: slowdown
 trim_mode: random_cut
 
 filtering:
-  n_frames: [0, 1000]
+  n_frames: [0, 2000]
   height: [0, 4096]
   width: [0, 4096]
   fps: [0, 100]

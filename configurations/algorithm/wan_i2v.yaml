@@ -14,7 +14,7 @@ clip:
 
 model:
   ckpt_path: data/ckpts/Wan2.1-I2V-14B-480P
-  tuned_ckpt_path: data/ckpts/lvp_14B.ckpt  #data/ckpts/phase3_40000.ckpt
+  tuned_ckpt_path: /data/dex/large-video-planner/outputs/2026-01-19/13-51-54/checkpoints/latest.ckpt  #data/ckpts/phase3_40000.ckpt
   model_type: i2v
   dim: 5120
   ffn_dim: 13824
@@ -23,7 +23,7 @@ model:
   use_lora: false
   lora_rank: 32
   lora_alpha: 32
-  lora_dropout: 0.05
+  lora_dropout: 0.0
   lora_target_modules: 
     - q
     - k

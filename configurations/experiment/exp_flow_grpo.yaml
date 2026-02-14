@@ -8,7 +8,7 @@ defaults:
 tasks: [training]
 
 training:
-  lr: 1e-5
+  lr: 2e-4
   batch_size: 1 # Sample batch size per device
   num_epochs: 100
   
@@ -22,11 +22,12 @@ training:
   seed: 0
 
   sample:
-    train_batch_size: 1 # per device
+    train_batch_size: 1 # micro batch size per device
+    sample_batch_size: 1 # per device
     num_image_per_prompt: 8 # number of images to generate per prompt during training
     eval_batch_size: 1 # per device
     guidance_scale: 5.0 # Classifier-free guidance scale during sampling
-    num_batches_per_epoch: 1 # Number of batches per epoch
+    num_batches_per_epoch: 1 # Number of batches of sampling  per epoch 
     num_steps: 40 # Number of diffusion steps during sampling
     global_std: False # Whether to use global std during sampling
     kl_reward : 0.0 # Weight for KL reward during sampling
@@ -36,12 +37,12 @@ training:
     ema_decay: 0.9
     ema_interval: 8
     cfg: False # Whether to use classifier-free guidance during training
-    num_inner_epochs: 2 # Number of inner epochs for GRPO
+    num_inner_epochs: 4 # Number of inner epochs for GRPO
     gradient_accumulation_steps: 1 # Gradient accumulation steps
     timestep_fraction :  0.99 # Fraction of timesteps to use during training
     adv_clip_max : 5.0 # Max value for advantage clipping
-    clip_range : 2e-3 
-    beta : 0.0 # KL penalty (Adjusted for stable regularization)
+    clip_range : 1e-5
+    beta : 0.004 # KL penalty (Adjusted for stable regularization)
     max_grad_norm : 1.0
 
 

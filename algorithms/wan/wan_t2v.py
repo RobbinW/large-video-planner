@@ -176,7 +176,10 @@ class WanTextToVideo(BasePytorchAlgo):
             
         # self.training 依赖 is_inference取反
         if not self.is_inference:
-            self.model.to(self.dtype).train()
+            # FSDP requires uniform dtype for all params in a wrapped unit.
+            # VAE and TextEncoder are hardcoded to bfloat16 to save memory.
+            # Thus, we must initialize the main model in bfloat16 as well.
+            self.model.to(torch.bfloat16).train()
 
             if self.cfg.model.get("use_lora", False):
                 from peft import LoraConfig, get_peft_model
@@ -730,18 +733,31 @@ class WanTextToVideo(BasePytorchAlgo):
 
     def validation_step(self, batch, batch_idx=None):
         video_pred = self.sample_seq(batch)
-        self.visualize(video_pred, batch)
+        self.visualize(video_pred, batch, batch_idx=batch_idx)
 
-    def visualize(self, video_pred, batch):
+    def visualize(self, video_pred, batch, batch_idx=0):
+        # Only log the first batch to prevent NCCL timeouts and excessive logging overhead
+        if batch_idx is not None and batch_idx > 0:
+            if is_rank_zero:
+                print(f"[DEBUG] Skipping visualization for batch {batch_idx}")
+            return
+
+        if is_rank_zero:
+            print(f"[DEBUG] Visualizing batch {batch_idx}")
+
         video_gt = batch["videos"]
 
         if self.cfg.logging.video_type == "single":
-            video_vis = video_pred.cpu()
+            video_vis = video_pred
         else:
             # Modified: GT on top, Pred on bottom
-            video_vis = torch.cat([video_gt, video_pred], dim=-2).cpu()
+            video_vis = torch.cat([video_gt, video_pred], dim=-2)
+        
         video_vis = video_vis * 0.5 + 0.5
-        video_vis = rearrange(self.all_gather(video_vis), "p b ... -> (p b) ...")
+        
+        # Keep on device for NCCL all_gather to avoid timeouts/errors with CPU tensors
+        video_vis = self.all_gather(video_vis)
+        video_vis = rearrange(video_vis, "p b ... -> (p b) ...").cpu()
 
         all_prompts = [None for _ in range(dist.get_world_size())]
         dist.all_gather_object(all_prompts, batch["prompts"])

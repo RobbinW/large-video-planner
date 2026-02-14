@@ -598,36 +598,74 @@ class WanModel(ModelMixin, ConfigMixin):
         # assert e.dtype == torch.float32 and e0.dtype == torch.float32
 
         # context
-        context_lens = None
-        context = self.text_embedding(
-            torch.stack(
-                [
-                    torch.cat([u, u.new_zeros(self.text_len - u.size(0), u.size(1))])
-                    for u in context
-                ]
-            )
-        )
+        context_lens = None  # 你当前实现里没用到 lengths，可以先保持 None
+
+        if isinstance(context, (list, tuple)):
+            # context: List[Tensor], each [Li, C]
+            # pad/truncate each to [text_len, C] then stack -> [B, text_len, C]
+            padded = []
+            for u in context:
+                if u.dim() != 2:
+                    raise ValueError(f"context list element must be 2D [L, C], got {u.shape}")
+                L, C = u.shape
+                if L < self.text_len:
+                    u = torch.cat([u, u.new_zeros(self.text_len - L, C)], dim=0)
+                else:
+                    u = u[: self.text_len]
+                padded.append(u)
+            context = torch.stack(padded, dim=0)  # [B, text_len, C]
+
+        elif torch.is_tensor(context):
+            # context: Tensor, expected [B, L, C] or [L, C]
+            if context.dim() == 2:
+                context = context.unsqueeze(0)  # [1, L, C]
+            if context.dim() != 3:
+                raise ValueError(f"context tensor must be 3D [B, L, C] (or 2D [L, C]), got {context.shape}")
+
+            B, L, C = context.shape
+            if L < self.text_len:
+                pad = context.new_zeros((B, self.text_len - L, C))
+                context = torch.cat([context, pad], dim=1)  # pad to [B, text_len, C]
+            elif L > self.text_len:
+                context = context[:, : self.text_len, :]     # truncate to [B, text_len, C]
+            # if L == self.text_len: do nothing (你想要的“维度符合就不扩展”)
+
+        else:
+            raise TypeError(f"context must be a list/tuple of tensors or a tensor, got {type(context)}")
+
+        # project to model dim
+        context = self.text_embedding(context)  # [B, text_len, dim]
 
         if clip_fea is not None:
             context_clip = self.img_emb(clip_fea)  # bs x 257 x dim
             context = torch.concat([context_clip, context], dim=1)
 
-        # arguments
-        kwargs = dict(
-            e=e0,
-            seq_lens=seq_lens,
-            grid_sizes=grid_sizes,
-            freqs=self.freqs,
-            context=context,
-            context_lens=context_lens,
-        )
-
         for i, block in enumerate(self.blocks):
-            block = partial(block, **kwargs)
             if i in self.gradient_checkpointing_indices:
-                x = checkpoint(block, x, use_reentrant=False)
+                # Use use_reentrant=True to ensure RNG state (Dropout in LoRA) is correctly preserved.
+                # We explicitly pass all inputs (x, e0, context, etc.) to avoid the "backward second time" error
+                # that typically occurs when relying on implicit closures.
+                x = checkpoint(
+                    block,
+                    x,
+                    e0,
+                    seq_lens,
+                    grid_sizes,
+                    self.freqs,
+                    context,
+                    context_lens,
+                    use_reentrant=True,
+                )
             else:
-                x = block(x)
+                x = block(
+                    x,
+                    e0,
+                    seq_lens,
+                    grid_sizes,
+                    self.freqs,
+                    context,
+                    context_lens,
+                )
 
         # head
         x = self.head(x, e)
