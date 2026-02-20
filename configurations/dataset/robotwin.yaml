@@ -15,6 +15,6 @@ filtering:
   width: [0, 4096]
   fps: [0, 100]
 
-download:
-  override_fps: 30
-  views: []
+# download:
+#   override_fps: 30
+#   views: []

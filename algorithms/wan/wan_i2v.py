@@ -166,8 +166,8 @@ class WanImageToVideo(WanTextToVideo):
         return batch
 
     def visualize(self, video_pred, batch, batch_idx=0):
-        if batch_idx is not None and batch_idx > 0:
-            return
+        # if batch_idx is not None and batch_idx > 0:
+        #     return
 
         bbox_render = batch["bbox_render"]  # b, 2, h, w for first and last frame
         has_bbox = batch["has_bbox"]  # b, 2 for first and last frame

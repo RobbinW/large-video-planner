@@ -17,6 +17,7 @@ from datasets.ego4d import Ego4DVideoDataset
 from datasets.mixture import MixtureDataset
 from datasets.agibot_world import AgibotWorldDataset
 from datasets.robotwin import RobotwinDataset
+from datasets.real_piper import RealPiperDataset
 from .exp_base import BaseExperiment
 
 
@@ -44,6 +45,7 @@ class ProcessDataExperiment(BaseExperiment):
         bridge=OpenXVideoDataset,
         droid=DroidVideoDataset,
         robotwin=RobotwinDataset,
+        real_piper=RealPiperDataset,
         agibot_world=AgibotWorldDataset,
         language_table=OpenXVideoDataset,
         # austin_buds=OpenXVideoDataset,

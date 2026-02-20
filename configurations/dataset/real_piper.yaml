@@ -1,0 +1,31 @@
+defaults:
+  - video_base
+  - _self_
+
+data_root: /data/dex/world_model_data/video_data
+metadata_path: real_video.csv
+load_prompt_embed: True
+load_video_latent: false
+pad_mode: slowdown
+trim_mode: random_cut
+
+filtering:
+  n_frames: [0, 2000]
+  height: [0, 4096]
+  width: [0, 4096]
+  fps: [0, 100]
+
+test_percentage: 1.0
+
+fps: 10
+
+augmentation:
+  is_augment: false
+  random_flip: null  # probability of random flip, null means no random flip
+  ratio: [1.0, 1.0] # random scaling of the aspect ratio, see torchvision.transforms.v2.RandomResizedCrop
+  scale: [1.0, 1.0] # random crop the video, see torchvision.transforms.v2.RandomResizedCrop
+
+
+# download:
+#   override_fps: 30
+#   views: []

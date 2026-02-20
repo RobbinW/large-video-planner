@@ -104,7 +104,7 @@ class WanTextToVideo(BasePytorchAlgo):
         target_dtype = torch.bfloat16
         print(f"[DEBUG] configure_model called. is_inference={self.is_inference}, target_dtype={target_dtype}, self.training={self.training}")
         # Initialize text encoder
-        if not self.cfg.load_prompt_embed:
+        if not self.cfg.load_prompt_embed or (self.is_inference and self.lang_guidance > 0):
             text_encoder = (
                 umt5_xxl(
                     encoder_only=True,
@@ -737,10 +737,10 @@ class WanTextToVideo(BasePytorchAlgo):
 
     def visualize(self, video_pred, batch, batch_idx=0):
         # Only log the first batch to prevent NCCL timeouts and excessive logging overhead
-        if batch_idx is not None and batch_idx > 0:
-            if is_rank_zero:
-                print(f"[DEBUG] Skipping visualization for batch {batch_idx}")
-            return
+        # if batch_idx is not None and batch_idx > 0:
+        #     if is_rank_zero:
+        #         print(f"[DEBUG] Skipping visualization for batch {batch_idx}")
+        #     return
 
         if is_rank_zero:
             print(f"[DEBUG] Visualizing batch {batch_idx}")

@@ -14,6 +14,7 @@ from datasets.ego4d import Ego4DVideoDataset
 from datasets.agibot_world import AgibotWorldDataset
 from datasets.mixture import MixtureDataset
 from datasets.robotwin import RobotwinDataset
+from datasets.real_piper import RealPiperDataset
 from datasets.video_base import SingleFrameVideoDataset
 from .exp_base import BaseLightningExperiment
 
@@ -42,6 +43,7 @@ class VideoPredictionExperiment(BaseLightningExperiment):
         bridge=OpenXVideoDataset,
         droid=DroidVideoDataset,
         robotwin=RobotwinDataset,
+        real_piper=RealPiperDataset,
         agibot_world=AgibotWorldDataset,
         language_table=OpenXVideoDataset,
         ours_test=SingleFrameVideoDataset,

@@ -86,25 +86,38 @@ class VideoDataset(Dataset):
         if augment and self.augmentation.random_flip is not None:
             trans.append(transforms.RandomHorizontalFlip(self.augmentation.random_flip))
 
-        aspect_ratio = self.width / self.height
-        aspect_ratio = [aspect_ratio, aspect_ratio]
-        if augment and self.augmentation.ratio is not None:
-            aspect_ratio[0] *= self.augmentation.ratio[0]
-            aspect_ratio[1] *= self.augmentation.ratio[1]
+        augment = self.augmentation.is_augment if hasattr(self.augmentation, 'is_augment') else augment
 
-        scale = [1.0, 1.0]
-        if augment and self.augmentation.scale is not None:
-            scale[0] *= self.augmentation.scale[0]
-            scale[1] *= self.augmentation.scale[1]
+        if augment:
 
-        trans.append(
-            transforms.RandomResizedCrop(
-                size=(self.height, self.width),
-                scale=scale,
-                ratio=aspect_ratio,
-                interpolation=transforms.InterpolationMode.BICUBIC,
-            ),
-        )
+            aspect_ratio = self.width / self.height
+            aspect_ratio = [aspect_ratio, aspect_ratio]
+            if augment and self.augmentation.ratio is not None:
+                aspect_ratio[0] *= self.augmentation.ratio[0]
+                aspect_ratio[1] *= self.augmentation.ratio[1]
+
+            scale = [1.0, 1.0]
+            if augment and self.augmentation.scale is not None:
+                scale[0] *= self.augmentation.scale[0]
+                scale[1] *= self.augmentation.scale[1]
+
+            trans.append(
+                transforms.RandomResizedCrop(
+                    size=(self.height, self.width),
+                    scale=scale,
+                    ratio=aspect_ratio,
+                    interpolation=transforms.InterpolationMode.BICUBIC,
+                ),
+            )
+        else:
+                    # --- 验证模式：去掉随机性，严格对齐中心裁剪 ---
+                    # 直接使用官方组合，完美解决视野和报错问题
+                    # 1. Resize：先按比例缩放，使得短边对齐目标
+                    # 2. CenterCrop：从中心切下目标尺寸
+                    # 这种组合在 scale=1.0 时，视野和你之前的函数逻辑是一模一样的
+                    trans.append(transforms.Resize(self.height, interpolation=transforms.InterpolationMode.BICUBIC))
+                    trans.append(transforms.CenterCrop((self.height, self.width)))
+        
         return transforms.Compose(trans)
 
     def preprocess_record(self, record: Dict[str, Any]) -> Dict[str, Any]:
@@ -511,7 +524,7 @@ class SingleFrameVideoDataset(VideoDataset):
 
     def _load_video(self, record: Dict[str, Any]) -> torch.Tensor:
         image_path = self.data_root / record["video_path"]
-        image = Image.open(image_path)
+        image = Image.open(image_path).convert("RGB")
         image = torch.from_numpy(np.array(image)).to(torch.uint8)
         frames = image.unsqueeze(0).repeat(self.n_frames, 1, 1, 1)
 
